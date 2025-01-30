@@ -14,6 +14,11 @@ A wrapper around cookiecutter for easy project templating.
 - **Rich Output**: Colorful and well-formatted terminal output
 - **Template Descriptions**: Document your templates for easy reference
 
+## Prerequisites
+
+- Python 3.9 or higher
+- `pipx` for installation
+
 ## Installation
 
 Install using pipx (recommended):
@@ -85,7 +90,7 @@ wanpc config set-description --name python-pkg --description "Python package tem
 #### Set Template-specific Defaults
 ```bash
 # Interactive mode (shows all available variables from cookiecutter.json)
-wanpc config set-default --name python-pkg
+wanpc config set-default 
 
 # Command-line mode
 wanpc config set-default --name python-pkg --key author --value "Your Name"

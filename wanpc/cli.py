@@ -14,7 +14,7 @@ from . import logger
 
 def format_help(text: str) -> str:
     """Format help text with proper word wrapping."""
-    return str(Text.from_markup(text))
+    return str(Text.from_markup(text).plain)
 
 def get_config() -> Dict[str, Any]:
     """Load and return the configuration."""
@@ -117,10 +117,10 @@ def list(
         help=format_help("[cyan]--show-defaults[/cyan] displays both template-specific and global default values")
     )
 ):
-    """[bold]List available templates[/bold]\n
+    """List available templates\n
     \tShows all configured templates and their paths.\n
     \tUse --show-defaults to see all configured default values.\n
-    \n[bold]Examples:[/bold]\n
+    \nExamples:\n
     \t$ wanpc list\n
     \t$ wanpc list --show-defaults"""
     table = Table(title="Available Templates")
@@ -170,13 +170,13 @@ def create(
         help=format_help("[cyan]--no-defaults[/cyan] skips using any default values from config")
     ),
 ):
-    """[bold]Create a new project from a template[/bold]\n
+    """Create a new project from a template\n
     \tUses the specified template to create a new project.\n
     \tBy default, it will:\n
     \t\t1. Use template-specific defaults if available\n
     \t\t2. Fall back to global defaults if no template default exists\n
     \t\t3. Create the project in the current directory\n
-    \n[bold]Examples:[/bold]\n
+    \nExamples:\n
     \t$ wanpc create python-pkg\n
     \t$ wanpc create python-pkg --output-dir ~/projects/new-pkg\n
     \t$ wanpc create python-pkg --no-defaults\n
@@ -346,7 +346,7 @@ def config(
         help=format_help("[cyan]--description[/cyan] specifies the template description")
     ),
 ):
-    """[bold]Manage wanpc configuration[/bold]\n
+    """Manage wanpc configuration\n
     \tAllows managing templates and their default values.\n
     \tYou can add/remove templates and set default values at both\n
     \tthe template and global levels.\n
@@ -426,7 +426,9 @@ def config(
 
         if action == "set-description":
             if not name:
-                raise typer.BadParameter("--name is required")
+                name = typer.prompt("Enter the name of the template")
+            if not description:
+                description = typer.prompt("Enter the description of the template")
 
             templates = cfg.get("templates", {})
             if name not in templates:
@@ -438,8 +440,15 @@ def config(
             return
 
         if action == "set-default":
-            if not name or not key or value is None:
-                raise typer.BadParameter("--name, --key, and --value are required")
+            # if not name or not key or value is None:
+            #     raise typer.BadParameter("--name, --key, and --value are required")
+
+            if not name:
+                name = typer.prompt("Enter the name of the template")
+            if not key:
+                key = typer.prompt("Enter the key of the template")
+            if not value:
+                value = typer.prompt("Enter the value of the template")
 
             templates = cfg.get("templates", {})
             if name not in templates:
@@ -462,8 +471,13 @@ def config(
             return
 
         if action == "set-global-default":
-            if not key or value is None:
-                raise typer.BadParameter("--key and --value are required")
+            # if not key or value is None:
+            #     raise typer.BadParameter("--key and --value are required")
+
+            if not key:
+                key = typer.prompt("Enter the key")
+            if not value:
+                value = typer.prompt("Enter the value")
 
             global_defaults = cfg.setdefault("global_defaults", {})
             global_defaults[key] = value
@@ -473,11 +487,16 @@ def config(
 
         if action == "remove-template":
             if not name:
-                raise typer.BadParameter("--name is required")
+                name = typer.prompt("Enter the name of the template")
+            
 
             templates = cfg.get("templates", {})
             if name not in templates:
                 raise typer.BadParameter(f"Template '{name}' not found")
+            
+            if not Confirm.ask(f"[yellow]Are you sure you want to remove the template '{name}'?[/yellow]"):
+                console.print("[red]Operation cancelled[/red]")
+                return
 
             del templates[name]
             save_config(cfg)
