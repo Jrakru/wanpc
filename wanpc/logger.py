@@ -70,3 +70,20 @@ def setup_logging(level: int = logging.INFO, log_file: Optional[str] = None) -> 
             logger.warning(f"Failed to create log file: {log_file}")
     
     return logger
+
+
+def debug(msg: str) -> None:
+    """Log a debug message."""
+    get_logger().debug(msg)
+
+def info(msg: str) -> None:
+    """Log an info message."""
+    get_logger().info(msg)
+
+def warning(msg: str) -> None:
+    """Log a warning message."""
+    get_logger().warning(msg)
+
+def error(msg: str) -> None:
+    """Log an error message."""
+    get_logger().error(msg)

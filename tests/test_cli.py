@@ -255,6 +255,50 @@ def test_create_project_existing_output_dir(temp_config, temp_template, tmp_path
     assert (output_dir / "My Project").exists()
     assert (output_dir / "My Project" / "README.md").exists()
 
+def test_create_project_with_command_line_overrides(temp_config, temp_template, tmp_path):
+    """Test creating a project with command line overrides that take precedence over defaults."""
+    # Add template with defaults
+    runner.invoke(app, [
+        "config", "add-template",
+        "--name", "test-template",
+        "--path", str(temp_template)
+    ])
+    
+    # Set template-specific default
+    runner.invoke(app, [
+        "config", "set-default",
+        "--name", "test-template",
+        "--key", "author",
+        "--value", "Template Author"
+    ])
+    
+    # Set global default
+    runner.invoke(app, [
+        "config", "set-global-default",
+        "--key", "license",
+        "--value", "MIT"
+    ])
+    
+    # Create project with command line overrides
+    output_dir = tmp_path / "output"
+    result = runner.invoke(app, [
+        "create",
+        "test-template",
+        "--output-dir", str(output_dir),
+        "--author", "Command Line Author",  # This should override template default
+        "--license", "GPL"  # This should override global default
+    ])
+    assert result.exit_code == 0
+    
+    # Verify overrides were used instead of defaults
+    readme_path = output_dir / "My Project" / "README.md"
+    assert readme_path.exists()
+    content = readme_path.read_text()
+    assert "Command Line Author" in content  # Command line override was used
+    assert "Template Author" not in content  # Template default was not used
+    assert "GPL" in content  # Command line override was used
+    assert "MIT" not in content  # Global default was not used
+
 def test_help_text():
     """Test help text formatting."""
     result = runner.invoke(app, ["--help"])
@@ -321,3 +365,82 @@ def test_set_invalid_default(temp_config, temp_template):
     ])
     assert result.exit_code == 1
     assert "Key 'invalid_key' not found in cookiecutter.json" in result.stdout
+
+def test_config_add_template_interactive(temp_config, temp_template):
+    """Test adding a template in interactive mode."""
+    # Simulate interactive input for name, path, and description
+    result = runner.invoke(
+        app,
+        ["config", "add-template"],
+        input=f"test-template\n{temp_template}\nTest Description\n"
+    )
+    assert result.exit_code == 0
+    assert "Added template 'test-template'" in result.stdout
+    assert "Description: Test Description" in result.stdout
+
+    # Verify template was added with correct values
+    result = runner.invoke(app, ["list"])
+    assert "test-template" in result.stdout
+    assert "Test Description" in result.stdout
+
+def test_config_add_template_interactive_partial(temp_config, temp_template):
+    """Test adding a template with some values provided via CLI and others via interactive input."""
+    result = runner.invoke(
+        app,
+        ["config", "add-template", "--name", "test-template"],
+        input=f"{temp_template}\nTest Description\n"
+    )
+    assert result.exit_code == 0
+    assert "Added template 'test-template'" in result.stdout
+    assert "Description: Test Description" in result.stdout
+
+    # Verify template was added with correct values
+    result = runner.invoke(app, ["list"])
+    assert "test-template" in result.stdout
+    assert "Test Description" in result.stdout
+
+def test_config_add_template_relative_path(temp_config, temp_template, monkeypatch):
+    """Test adding a template using a relative path."""
+    # Set up a fake current working directory
+    fake_cwd = temp_template.parent
+    monkeypatch.setattr(Path, "cwd", lambda: fake_cwd)
+
+    # Use relative path (just the template directory name)
+    relative_path = temp_template.name
+
+    result = runner.invoke(app, [
+        "config", "add-template",
+        "--name", "test-template",
+        "--path", relative_path,
+        "--description", "Test template"
+    ])
+    assert result.exit_code == 0
+    assert "Added template" in result.stdout
+
+    # Verify template was added with absolute path
+    result = runner.invoke(app, ["config", "show"])
+    config_output = result.stdout
+    assert str(temp_template.resolve()) in config_output  # Should show absolute path
+    assert "test-template" in config_output
+
+def test_config_add_template_relative_path_interactive(temp_config, temp_template, monkeypatch):
+    """Test adding a template using a relative path in interactive mode."""
+    # Set up a fake current working directory
+    fake_cwd = temp_template.parent
+    monkeypatch.setattr(Path, "cwd", lambda: fake_cwd)
+
+    # Use relative path in interactive input
+    relative_path = temp_template.name
+    result = runner.invoke(
+        app,
+        ["config", "add-template"],
+        input=f"test-template\n{relative_path}\nTest Description\n"
+    )
+    assert result.exit_code == 0
+    assert "Added template" in result.stdout
+
+    # Verify template was added with absolute path
+    result = runner.invoke(app, ["config", "show"])
+    config_output = result.stdout
+    assert str(temp_template.resolve()) in config_output  # Should show absolute path
+    assert "test-template" in config_output

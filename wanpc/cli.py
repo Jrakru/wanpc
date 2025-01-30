@@ -152,8 +152,9 @@ def list(
         console.print(f"[red]Error listing templates: {str(e)}[/red]")
         raise typer.Exit(1)
 
-@app.command()
+@app.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
 def create(
+    ctx: typer.Context,
     template: str = typer.Argument(
         ...,
         help=format_help("[cyan]template[/cyan] is the name of the template to use (run [cyan]wanpc list[/cyan] to see available templates)")
@@ -178,13 +179,11 @@ def create(
     \n[bold]Examples:[/bold]\n
     \t$ wanpc create python-pkg\n
     \t$ wanpc create python-pkg --output-dir ~/projects/new-pkg\n
-    \t$ wanpc create python-pkg --no-defaults"""
+    \t$ wanpc create python-pkg --no-defaults\n
+    \t$ wanpc create python-pkg --author "John Doe" --license MIT  # Override defaults"""
     try:
         cfg = get_config()
         templates = cfg.setdefault("templates", {})
-        
-        console.print(f"[dim]Debug: Available templates: {list(templates.keys())}[/dim]")
-        console.print(f"[dim]Debug: Requested template: {template}[/dim]")
         
         if template not in templates:
             console.print(f"[red]Error: Template '{template}' not found[/red]")
@@ -193,70 +192,101 @@ def create(
         template_data = templates[template]
         template_path = template_data.get("path")
         
-        console.print(f"[dim]Debug: Template path: {template_path}[/dim]")
-        
         if not template_path:
             console.print(f"[red]Error: No path set for template '{template}'[/red]")
             raise typer.Exit(1)
         
         # Verify template path exists
         template_path = Path(template_path).expanduser().resolve()
-        console.print(f"[dim]Debug: Resolved template path: {template_path}[/dim]")
-        console.print(f"[dim]Debug: Template path exists: {template_path.exists()}[/dim]")
-        
         if not template_path.exists():
             console.print(f"[red]Error: Template path does not exist: {template_path}[/red]")
             raise typer.Exit(1)
 
-        # Verify cookiecutter.json exists
-        cookiecutter_json = template_path / "cookiecutter.json"
-        console.print(f"[dim]Debug: Cookiecutter.json path: {cookiecutter_json}[/dim]")
-        console.print(f"[dim]Debug: Cookiecutter.json exists: {cookiecutter_json.exists()}[/dim]")
-        
-        if not cookiecutter_json.exists():
+        # Load cookiecutter.json to get required values
+        cookiecutter_config = load_cookiecutter_config(str(template_path))
+        if not cookiecutter_config:
             console.print(f"[red]Error: No cookiecutter.json found in {template_path}[/red]")
             raise typer.Exit(1)
 
-        # Use default values from config if available
+        # Debug: Log cookiecutter config contents
+        logger.debug("Cookiecutter config contents:")
+        for key, value in cookiecutter_config.items():
+            logger.debug(f"  {key}: {value} (type: {type(value)})")
+
+        # Parse any command line overrides
         extra_context = {}
+        for item in ctx.args:
+            if item.startswith("--"):
+                key = item[2:]  # Remove --
+                if key in cookiecutter_config and len(ctx.args) > ctx.args.index(item) + 1:
+                    value = ctx.args[ctx.args.index(item) + 1]
+                    if not value.startswith("--"):
+                        extra_context[key] = value
+                        console.print(f"[yellow]Using override for {key}: {value}[/yellow]")
+
+        # Add defaults if enabled (but don't override command line values)
         if not no_defaults:
             try:
                 merged_defaults = Config.get_merged_defaults(cfg, template)
                 if merged_defaults:
-                    extra_context.update(merged_defaults)
-                    console.print("[green]Using default values:[/green]")
-                    
-                    # Show which defaults are being used and their source
-                    template_defaults = template_data.get("defaults", {})
-                    global_defaults = cfg.get("global_defaults", {})
-                    
+                    # Only add defaults for keys that weren't specified on command line
                     for key, value in merged_defaults.items():
-                        if key in template_defaults:
-                            if key in global_defaults:
-                                console.print(f"  {key}: {value} [yellow](template default, overriding global)[/yellow]")
+                        if key not in extra_context:
+                            extra_context[key] = value
+                            if key in template_data.get("defaults", {}):
+                                if key in cfg.get("global_defaults", {}):
+                                    console.print(f"  {key}: {value} [yellow](template default, overriding global)[/yellow]")
+                                else:
+                                    console.print(f"  {key}: {value} [yellow](template default)[/yellow]")
                             else:
-                                console.print(f"  {key}: {value} [yellow](template default)[/yellow]")
-                        else:
-                            console.print(f"  {key}: {value} [blue](global default)[/blue]")
+                                console.print(f"  {key}: {value} [blue](global default)[/blue]")
             except KeyError:
-                # This can happen if the template was removed after loading config
                 console.print(f"[red]Error: Template '{template}' not found in config[/red]")
                 raise typer.Exit(1)
-        
+
+        # Prompt for any missing values
+        console.print("\n[bold cyan]Please provide values for the following:[/bold cyan]")
+        for key, default_value in cookiecutter_config.items():
+            try:
+                logger.debug(f"Processing key: {key}, value: {default_value} (type: {type(default_value)})")
+                
+                if key not in extra_context and not key.startswith('_'):  # Skip internal keys
+                    # Skip derived values (those that are Jinja2 templates)
+                    if type(default_value) == str and default_value.find('{{') != -1:
+                        logger.debug(f"Skipping template value: {key}")
+                        continue
+                    
+                    # For list values, only show as choices, not as default
+                    if type(default_value) == list:
+                        choices = [str(choice) for choice in default_value]
+                        value = Prompt.ask(
+                            f"[cyan]{key}[/cyan] [dim](choices: {', '.join(choices)})[/dim]",
+                            choices=choices,
+                            default=choices[0]
+                        )
+                    else:
+                        # For non-list values, show default
+                        prompt = f"[cyan]{key}[/cyan]"
+                        if default_value:
+                            prompt += f" [dim](default: {default_value})[/dim]"
+                        value = Prompt.ask(prompt, default=str(default_value) if default_value else "")
+                        
+                    extra_context[key] = value
+            except Exception as e:
+                logger.error(f"Error processing {key}: {str(e)}")
+                raise
+
         try:
             # Create output directory if it doesn't exist
             output_dir = Path(output_dir).expanduser().resolve()
             output_dir.mkdir(parents=True, exist_ok=True)
-            
-            console.print(f"[dim]Debug: Output directory: {output_dir}[/dim]")
-            console.print(f"[dim]Debug: Extra context: {extra_context}[/dim]")
 
-            # Run cookiecutter
+            # Run cookiecutter with our collected values
             cookiecutter(
                 str(template_path),
                 output_dir=str(output_dir),
                 extra_context=extra_context,
-                no_input=True  # Always skip prompts since we have defaults from cookiecutter.json
+                no_input=True  # We've already collected all values
             )
             console.print(f"[green]Created project from template '{template}'[/green]")
         except Exception as e:
@@ -347,10 +377,28 @@ def config(
             return
 
         if action == "add-template":
-            if not name or not path:
-                raise typer.BadParameter("Both --name and --path are required")
+            # Interactive mode if required values are not provided
+            if not name:
+                name = Prompt.ask("[cyan]Enter template name[/cyan]")
+                if not name:
+                    raise typer.BadParameter("Template name is required")
 
-            template_path = Path(path).expanduser().resolve()
+            if not path:
+                path = Prompt.ask("[cyan]Enter template path[/cyan]")
+                if not path:
+                    raise typer.BadParameter("Template path is required")
+
+            if not description:
+                description = Prompt.ask(
+                    "[cyan]Enter template description[/cyan] [dim](optional, press Enter to skip)[/dim]",
+                    default="No description"
+                )
+
+            # Convert relative path to absolute path
+            template_path = Path(path)
+            if not template_path.is_absolute():
+                template_path = Path.cwd() / template_path
+            template_path = template_path.resolve()
             
             # Validate path exists
             if not template_path.exists():
@@ -367,11 +415,13 @@ def config(
             templates[name] = {
                 "path": str(template_path),
                 "defaults": {},
-                "description": description if description else "No description"
+                "description": description
             }
 
             save_config(cfg)
             console.print(f"[green]Added template '{name}' with path: {template_path}[/green]")
+            if description and description != "No description":
+                console.print(f"[green]Description: {description}[/green]")
             return
 
         if action == "set-description":
