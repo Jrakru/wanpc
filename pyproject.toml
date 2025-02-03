@@ -1,17 +1,20 @@
 [build-system]
-requires = ["poetry-core>=1.0.0"]
+requires = [
+    "poetry-core>=1.0.0",
+]
 build-backend = "poetry.core.masonry.api"
 
 [project]
 name = "wanpc"
 version = "0.1.0"
 description = "Tempalte manager for common python tasks"
-readme = { file = "README.md", content-type = "text/markdown" }
 authors = [
-    { name = "Jean Philippe Wan", email = "jeanphilippe.wan@statcan.gc.ca" }
+    { name = "Jean Philippe Wan", email = "jeanphilippe.wan@statcan.gc.ca" },
 ]
-license = { text = "MIT" }
-keywords = ["template", "workflow"]
+keywords = [
+    "template",
+    "workflow",
+]
 classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.9",
@@ -21,67 +24,76 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
-    # Add more classifiers as needed
 ]
 requires-python = ">=3.9, <4.0"
 dependencies = [
     "typer>=0.9.0",
     "cookiecutter>=2.5.0",
     "rich>=13.7.0",
-    "toml>=0.10.2"
+    "toml>=0.10.2",
+    "tomli>=2.0.1",
+    "tomli_w>=1.0.0",
+    "validate_pyproject>=0.23",
 ]
+
+[project.readme]
+file = "README.md"
+content-type = "text/markdown"
+
+[project.license]
+text = "MIT"
 
 [project.optional-dependencies]
 dev = [
     "pytest>=7.4.0",
     "pytest-cov>=4.1.0",
     "ruff>=0.0.284",
-    "mypy>=1.5.0"
+    "mypy>=1.5.0",
 ]
-# You can add more optional groups, such as "docs", "testing", etc.
 
 [project.scripts]
 wanpc = "wanpc.cli:main"
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
-python_files = ["test_*.py"]
+testpaths = [
+    "tests",
+]
+python_files = [
+    "test_*.py",
+]
 addopts = "-ra -q --cov=your_package --cov-report=term-missing"
 
 [tool.ruff]
-# Select categories of linting rules:
-# E: PyCQA's pycodestyle errors
-# F: PyCQA's pyflakes errors
-# B: Bugbear linter (additional error checks)
-# I: Import-related rules
-select = ["E", "F", "B", "I"]
-
-# Ignore specific rules that may not align with project preferences:
-# E203: Whitespace before ':' (conflicts with black formatting)
-# E501: Line length (handled separately via 'line-length')
-ignore = ["E203", "E501"]
-
-# Maximum allowed line length
+select = [
+    "E",
+    "F",
+    "B",
+    "I",
+]
+ignore = [
+    "E203",
+    "E501",
+]
 line-length = 120
-
-# Target Python versions for syntax and feature support
-target-version = ["py39", "py310", "py311", "py312", "py313"]
-
-# Directories to exclude from linting
-exclude = ["venv/", "build/", "dist/"]  # Exclude virtual environments and build artifacts
+target-version = [
+    "py39",
+    "py310",
+    "py311",
+    "py312",
+    "py313",
+]
+exclude = [
+    "venv/",
+    "build/",
+    "dist/",
+]
 
 [tool.mypy]
-# mypy does not natively support specifying multiple Python versions.
-# Instead, set the minimum version and ensure type annotations are compatible across all target versions.
-python_version = "3.9"
+python_version = "3.12"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
-strict = true  # Enable all strict optional checks
-ignore_missing_imports = true  # Useful if some dependencies lack type hints
+strict = true
+ignore_missing_imports = true
 
 [tool.coverage.report]
-# Configure coverage reporting if using coverage.py directly
-# omit = ["tests/*"]
-
-# Optionally, add other tool configurations here

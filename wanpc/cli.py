@@ -7,7 +7,10 @@ from rich.console import Console
 from rich.table import Table
 from rich.text import Text
 from cookiecutter.main import cookiecutter
+import tomli, tomli_w
 from rich.prompt import Prompt, Confirm
+import shutil
+from validate_pyproject import api, errors
 
 from .config import Config
 from . import logger
@@ -109,8 +112,10 @@ def display_template_info(template_name: str, template_data: Dict[str, Any], cfg
             if key not in defaults:  # Only show if not overridden by template default
                 console.print(f"  [cyan]{key}[/cyan] = {value}")
 
-@app.command()
-def list(
+
+#todo fix alias
+@app.command(name="list")
+def my_list_command(
     show_defaults: bool = typer.Option(
         False,
         "--show-defaults", "-d",
@@ -150,6 +155,113 @@ def list(
 
     except Exception as e:
         console.print(f"[red]Error listing templates: {str(e)}[/red]")
+        raise typer.Exit(1)
+
+@app.command()
+def add_docs(
+    target_dir: Optional[Path] = typer.Argument(
+        None,
+        help="The target directory where the docs folder will be created (defaults to current directory)"
+    )
+):
+    """Add a docs folder with initial documentation structure."""
+    try:
+        if target_dir is None:
+            target_dir = Path.cwd()
+        else:
+            target_dir = Path(target_dir).expanduser().resolve()
+
+        pyproject_path = target_dir / "pyproject.toml"
+        if not pyproject_path.exists():
+            console.print(f"[red]Error: pyproject.toml not found in {target_dir}[/red]")
+            raise typer.Exit(1)
+
+        with open(pyproject_path, "rb") as f:
+            pyproject_data = tomli.load(f)
+            name = pyproject_data.get("project", {}).get("name")
+            authors = pyproject_data.get("project", {}).get("authors", [])
+            author_name = authors[0].get("name") if authors else "Unknown Author"
+            release = pyproject_data.get("project", {}).get("version", "0.1.0")
+            year = 2025
+            
+            if not name:
+                console.print(f"[red]Error: 'name' not found in pyproject.toml[/red]")
+                raise typer.Exit(1)
+
+        docs_path = target_dir / "docs"
+        if docs_path.exists():
+            console.print(f"[red]Error: The docs folder already exists in {docs_path}[/red]")
+            raise typer.Exit(1)
+
+        # Path to the template within the project directory
+        print("test")
+        script_dir = Path(__file__).resolve().parent
+        repo_root = script_dir.parents[1]  # Adjust this if the structure changes
+        template_path = repo_root / "python_templates" / "docs" / "docs"
+        template_path = template_path.resolve()
+
+        if not template_path.exists():
+            console.print(f"[red]Error: Template path does not exist: {template_path}[/red]")
+            raise typer.Exit(1)
+
+        # Copy the template to the target directory
+        shutil.copytree(template_path, docs_path)
+
+        # Modify the copied files according to the package in question
+        # For example, you can replace placeholders in the copied files
+        for file_path in docs_path.rglob('*'):
+            if file_path.is_file():
+                content = file_path.read_text()
+                content = content.replace('{{ cookiecutter.project_slug }}', (name))
+                content = content.replace('{{ cookiecutter.project_name }}', (name))
+                content = content.replace('{{ cookiecutter.author_name }}', (author_name))
+                content = content.replace('{{ cookiecutter.version }}', (release))
+                content = content.replace('{{ cookiecutter.year }}', str(year))
+                content = content.replace('{{ cookiecutter.project_slug.upper() }}', name.upper())
+                file_path.write_text(content) 
+
+        # Add documentation dependencies to pyproject.toml
+        requirements_path = template_path / "requirements.txt"
+        if not requirements_path.exists():
+            console.print(f"[red]Error: requirements.txt not found in {template_path}[/red]")
+            raise typer.Exit(1)
+
+        with open(requirements_path, "r") as req_file:
+            doc_dependencies = [line.strip() for line in req_file if line.strip() and not line.startswith("#")]
+
+
+        if "project" not in pyproject_data:
+            pyproject_data["project"] = {}
+        if "optional-dependencies" not in pyproject_data["project"]:
+            pyproject_data["project"]["optional-dependencies"] = {}
+        if "docs" not in pyproject_data["project"]["optional-dependencies"]:
+            pyproject_data["project"]["optional-dependencies"]["docs"] = []
+
+        # Ensure no duplicates are added
+        existing_dependencies = set(pyproject_data["project"]["optional-dependencies"]["docs"])
+        new_dependencies = set(doc_dependencies)
+        combined_dependencies = existing_dependencies.union(new_dependencies)
+        pyproject_data["project"]["optional-dependencies"]["docs"] = list(combined_dependencies)
+
+        with open(pyproject_path, "wb") as f:
+            tomli_w.dump(pyproject_data, f)
+
+        console.print(f"[green]Docs folder created successfully in {docs_path}[/green]")
+        console.print(f"[green]Documentation dependencies added to pyproject.toml[/green]")
+
+        # now we can use validate-pyproject
+        validator = api.Validator()
+
+        try:
+            validator(pyproject_data)
+            console.print(f"[green]Created pyproject.toml file is valid[/green]")
+        except errors.ValidationError as ex:
+            print(f"Invalid Document: {ex.message}")
+
+
+
+    except Exception as e:
+        console.print(f"[red]Error creating docs folder: {str(e)}[/red]")
         raise typer.Exit(1)
 
 @app.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
