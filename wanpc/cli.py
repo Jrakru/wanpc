@@ -194,7 +194,6 @@ def add_docs(
             raise typer.Exit(1)
 
         # Path to the template within the project directory
-        print("test")
         script_dir = Path(__file__).resolve().parent
         repo_root = script_dir.parents[1]  # Adjust this if the structure changes
         template_path = repo_root / "python_templates" / "docs" / "docs"
