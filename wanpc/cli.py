@@ -7,14 +7,17 @@ from rich.console import Console
 from rich.table import Table
 from rich.text import Text
 from cookiecutter.main import cookiecutter
+import tomli, tomli_w
 from rich.prompt import Prompt, Confirm
+import shutil
+from validate_pyproject import api, errors
 
 from .config import Config
 from . import logger
 
 def format_help(text: str) -> str:
     """Format help text with proper word wrapping."""
-    return str(Text.from_markup(text))
+    return str(Text.from_markup(text).plain)
 
 def get_config() -> Dict[str, Any]:
     """Load and return the configuration."""
@@ -109,18 +112,20 @@ def display_template_info(template_name: str, template_data: Dict[str, Any], cfg
             if key not in defaults:  # Only show if not overridden by template default
                 console.print(f"  [cyan]{key}[/cyan] = {value}")
 
-@app.command()
-def list(
+
+#todo fix alias
+@app.command(name="list")
+def my_list_command(
     show_defaults: bool = typer.Option(
         False,
         "--show-defaults", "-d",
         help=format_help("[cyan]--show-defaults[/cyan] displays both template-specific and global default values")
     )
 ):
-    """[bold]List available templates[/bold]\n
+    """List available templates\n
     \tShows all configured templates and their paths.\n
     \tUse --show-defaults to see all configured default values.\n
-    \n[bold]Examples:[/bold]\n
+    \nExamples:\n
     \t$ wanpc list\n
     \t$ wanpc list --show-defaults"""
     table = Table(title="Available Templates")
@@ -152,6 +157,140 @@ def list(
         console.print(f"[red]Error listing templates: {str(e)}[/red]")
         raise typer.Exit(1)
 
+@app.command()
+def add_docs(
+    target_dir: Optional[Path] = typer.Argument(
+        None,
+        help="The target directory where the docs folder will be created (defaults to current directory)"
+    )
+):
+    """Add a docs folder with initial documentation structure."""
+    try:
+        if target_dir is None:
+            target_dir = Path.cwd()
+        else:
+            target_dir = Path(target_dir).expanduser().resolve()
+
+        pyproject_path = target_dir / "pyproject.toml"
+        if not pyproject_path.exists():
+            console.print(f"[red]Error: pyproject.toml not found in {target_dir}[/red]")
+            raise typer.Exit(1)
+
+        with open(pyproject_path, "rb") as f:
+            pyproject_data = tomli.load(f)
+            project_data = pyproject_data.get("project", pyproject_data.get("tool", {}).get("poetry", {}))
+            name = project_data.get("name")
+            authors = project_data.get("authors", [])
+            if authors and isinstance(authors[0], str):
+                # Convert authors to list of objects
+                authors = [{"name": author.split("<")[0].strip(), "email": author.split("<")[1].strip(">").strip()} for author in authors]
+            release = project_data.get("version", "0.1.0")
+            year = 2025
+            
+            if not name:
+                console.print(f"[red]Error: 'name' not found in pyproject.toml[/red]")
+                raise typer.Exit(1)
+
+        docs_path = target_dir / "docs"
+        if docs_path.exists():
+            console.print(f"[red]Error: The docs folder already exists in {docs_path}[/red]")
+            raise typer.Exit(1)
+
+        # Get the template path from the configuration
+        cfg = get_config()
+        templates = cfg.get("templates", {})
+        if not templates:
+            console.print(f"[red]Error: No templates found in configuration[/red]")
+            raise typer.Exit(1)
+
+        # Use the path of the first template to find the docs template
+        first_template_path = Path(next(iter(templates.values()))["path"])
+        template_path = first_template_path.parent / "docs" / "docs"
+        
+        if not template_path.exists():
+            console.print(f"[red]Error: Docs template path does not exist: {template_path}[/red]")
+            raise typer.Exit(1)
+        
+        requirements_path = template_path.parent.parent / "requirements.txt"
+
+        # Copy the template to the target directory
+        shutil.copytree(template_path, docs_path)
+
+        # Modify the copied files according to the package in question
+        # For example, you can replace placeholders in the copied files
+        for file_path in docs_path.rglob('*'):
+            if file_path.is_file():
+                content = file_path.read_text()
+                content = content.replace('{{ cookiecutter.project_slug }}', (name))
+                content = content.replace('{{ cookiecutter.project_name }}', (name))
+                ccontent = content.replace('{{ cookiecutter.author_name }}', (authors[0]["name"]))
+                content = content.replace('{{ cookiecutter.version }}', (release))
+                content = content.replace('{{ cookiecutter.year }}', str(year))
+                content = content.replace('{{ cookiecutter.project_slug.upper() }}', name.upper())
+                file_path.write_text(content) 
+
+        # Add documentation dependencies to pyproject.toml
+        if not requirements_path.exists():
+            console.print(f"[red]Error: requirements.txt not found in {template_path}[/red]")
+            raise typer.Exit(1)
+
+        with open(requirements_path, "r") as req_file:
+            doc_dependencies = [line.strip() for line in req_file if line.strip() and not line.startswith("#") and not line.startswith('{')]
+
+
+        if "project" not in pyproject_data:
+            pyproject_data["project"] = {}
+        if "optional-dependencies" not in pyproject_data["project"]:
+            pyproject_data["project"]["optional-dependencies"] = {}
+        if "docs" not in pyproject_data["project"]["optional-dependencies"]:
+            pyproject_data["project"]["optional-dependencies"]["docs"] = []
+
+        # Ensure no duplicates are added
+        existing_dependencies = set(pyproject_data["project"]["optional-dependencies"]["docs"])
+        new_dependencies = set(doc_dependencies)
+        combined_dependencies = existing_dependencies.union(new_dependencies)
+        pyproject_data["project"]["optional-dependencies"]["docs"] = list(combined_dependencies)
+
+        # Updating pyproject.toml to pass validate-pyproject
+        pyproject_data["project"]["authors"] = authors
+        if "version" not in pyproject_data["project"]:
+            pyproject_data["project"]["version"] = release
+        if "name" not in pyproject_data["project"]:
+            pyproject_data["project"]["name"] = name
+
+        with open(pyproject_path, "wb") as f:
+            tomli_w.dump(pyproject_data, f)
+
+        console.print(f"[green]Docs folder created successfully in {docs_path}[/green]")
+        console.print(f"[green]Documentation dependencies added to pyproject.toml[/green]")
+
+        # now we can use validate-pyproject
+        validator = api.Validator()
+
+        try:
+            validator(pyproject_data)
+            console.print(f"[green]Created pyproject.toml file is valid[/green]")
+        except errors.ValidationError as ex:
+            print(f"Invalid Document: {ex.message}")
+
+        
+
+
+        yml_path = first_template_path.parent / ".gitlab-ci.yml"
+        if yml_path.exists() and not (target_dir / ".gitlab-ci.yml").exists():
+            with open(yml_path, "r") as yml_file:
+                yml_content = yml_file.read()
+            yml_content = yml_content.replace("$PROJECT_NAME", name)
+            with open(target_dir / ".gitlab-ci.yml", "w") as yml_file:
+                yml_file.write(yml_content)
+
+        
+
+
+    except Exception as e:
+        console.print(f"[red]Error creating docs folder: {str(e)}[/red]")
+        raise typer.Exit(1)
+
 @app.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
 def create(
     ctx: typer.Context,
@@ -170,13 +309,13 @@ def create(
         help=format_help("[cyan]--no-defaults[/cyan] skips using any default values from config")
     ),
 ):
-    """[bold]Create a new project from a template[/bold]\n
+    """Create a new project from a template\n
     \tUses the specified template to create a new project.\n
     \tBy default, it will:\n
     \t\t1. Use template-specific defaults if available\n
     \t\t2. Fall back to global defaults if no template default exists\n
     \t\t3. Create the project in the current directory\n
-    \n[bold]Examples:[/bold]\n
+    \nExamples:\n
     \t$ wanpc create python-pkg\n
     \t$ wanpc create python-pkg --output-dir ~/projects/new-pkg\n
     \t$ wanpc create python-pkg --no-defaults\n
@@ -346,7 +485,7 @@ def config(
         help=format_help("[cyan]--description[/cyan] specifies the template description")
     ),
 ):
-    """[bold]Manage wanpc configuration[/bold]\n
+    """Manage wanpc configuration\n
     \tAllows managing templates and their default values.\n
     \tYou can add/remove templates and set default values at both\n
     \tthe template and global levels.\n
@@ -426,7 +565,9 @@ def config(
 
         if action == "set-description":
             if not name:
-                raise typer.BadParameter("--name is required")
+                name = typer.prompt("Enter the name of the template")
+            if not description:
+                description = typer.prompt("Enter the description of the template")
 
             templates = cfg.get("templates", {})
             if name not in templates:
@@ -438,8 +579,15 @@ def config(
             return
 
         if action == "set-default":
-            if not name or not key or value is None:
-                raise typer.BadParameter("--name, --key, and --value are required")
+            # if not name or not key or value is None:
+            #     raise typer.BadParameter("--name, --key, and --value are required")
+
+            if not name:
+                name = typer.prompt("Enter the name of the template")
+            if not key:
+                key = typer.prompt("Enter the key of the template")
+            if not value:
+                value = typer.prompt("Enter the value of the template")
 
             templates = cfg.get("templates", {})
             if name not in templates:
@@ -462,8 +610,13 @@ def config(
             return
 
         if action == "set-global-default":
-            if not key or value is None:
-                raise typer.BadParameter("--key and --value are required")
+            # if not key or value is None:
+            #     raise typer.BadParameter("--key and --value are required")
+
+            if not key:
+                key = typer.prompt("Enter the key")
+            if not value:
+                value = typer.prompt("Enter the value")
 
             global_defaults = cfg.setdefault("global_defaults", {})
             global_defaults[key] = value
@@ -473,11 +626,16 @@ def config(
 
         if action == "remove-template":
             if not name:
-                raise typer.BadParameter("--name is required")
+                name = typer.prompt("Enter the name of the template")
+            
 
             templates = cfg.get("templates", {})
             if name not in templates:
                 raise typer.BadParameter(f"Template '{name}' not found")
+            
+            if not Confirm.ask(f"[yellow]Are you sure you want to remove the template '{name}'?[/yellow]"):
+                console.print("[red]Operation cancelled[/red]")
+                return
 
             del templates[name]
             save_config(cfg)
