@@ -210,6 +210,8 @@ def add_docs(
         if not template_path.exists():
             console.print(f"[red]Error: Docs template path does not exist: {template_path}[/red]")
             raise typer.Exit(1)
+        
+        requirements_path = template_path.parent.parent / "requirements.txt"
 
         # Copy the template to the target directory
         shutil.copytree(template_path, docs_path)
@@ -228,7 +230,6 @@ def add_docs(
                 file_path.write_text(content) 
 
         # Add documentation dependencies to pyproject.toml
-        requirements_path = template_path / "requirements.txt"
         if not requirements_path.exists():
             console.print(f"[red]Error: requirements.txt not found in {template_path}[/red]")
             raise typer.Exit(1)
@@ -272,6 +273,18 @@ def add_docs(
         except errors.ValidationError as ex:
             print(f"Invalid Document: {ex.message}")
 
+        
+
+
+        yml_path = first_template_path.parent / ".gitlab-ci.yml"
+        if yml_path.exists() and not (target_dir / ".gitlab-ci.yml").exists():
+            with open(yml_path, "r") as yml_file:
+                yml_content = yml_file.read()
+            yml_content = yml_content.replace("$PROJECT_NAME", name)
+            with open(target_dir / ".gitlab-ci.yml", "w") as yml_file:
+                yml_file.write(yml_content)
+
+        
 
 
     except Exception as e:
