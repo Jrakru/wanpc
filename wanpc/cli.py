@@ -178,10 +178,13 @@ def add_docs(
 
         with open(pyproject_path, "rb") as f:
             pyproject_data = tomli.load(f)
-            name = pyproject_data.get("project", {}).get("name")
-            authors = pyproject_data.get("project", {}).get("authors", [])
-            author_name = authors[0].get("name") if authors else "Unknown Author"
-            release = pyproject_data.get("project", {}).get("version", "0.1.0")
+            project_data = pyproject_data.get("project", pyproject_data.get("tool", {}).get("poetry", {}))
+            name = project_data.get("name")
+            authors = project_data.get("authors", [])
+            if authors and isinstance(authors[0], str):
+                # Convert authors to list of objects
+                authors = [{"name": author.split("<")[0].strip(), "email": author.split("<")[1].strip(">").strip()} for author in authors]
+            release = project_data.get("version", "0.1.0")
             year = 2025
             
             if not name:
@@ -193,14 +196,19 @@ def add_docs(
             console.print(f"[red]Error: The docs folder already exists in {docs_path}[/red]")
             raise typer.Exit(1)
 
-        # Path to the template within the project directory
-        script_dir = Path(__file__).resolve().parent
-        repo_root = script_dir.parents[1]  # Adjust this if the structure changes
-        template_path = repo_root / "python_templates" / "docs" / "docs"
-        template_path = template_path.resolve()
+        # Get the template path from the configuration
+        cfg = get_config()
+        templates = cfg.get("templates", {})
+        if not templates:
+            console.print(f"[red]Error: No templates found in configuration[/red]")
+            raise typer.Exit(1)
 
+        # Use the path of the first template to find the docs template
+        first_template_path = Path(next(iter(templates.values()))["path"])
+        template_path = first_template_path.parent / "docs" / "docs"
+        
         if not template_path.exists():
-            console.print(f"[red]Error: Template path does not exist: {template_path}[/red]")
+            console.print(f"[red]Error: Docs template path does not exist: {template_path}[/red]")
             raise typer.Exit(1)
 
         # Copy the template to the target directory
@@ -213,7 +221,7 @@ def add_docs(
                 content = file_path.read_text()
                 content = content.replace('{{ cookiecutter.project_slug }}', (name))
                 content = content.replace('{{ cookiecutter.project_name }}', (name))
-                content = content.replace('{{ cookiecutter.author_name }}', (author_name))
+                ccontent = content.replace('{{ cookiecutter.author_name }}', (authors[0]["name"]))
                 content = content.replace('{{ cookiecutter.version }}', (release))
                 content = content.replace('{{ cookiecutter.year }}', str(year))
                 content = content.replace('{{ cookiecutter.project_slug.upper() }}', name.upper())
@@ -226,7 +234,7 @@ def add_docs(
             raise typer.Exit(1)
 
         with open(requirements_path, "r") as req_file:
-            doc_dependencies = [line.strip() for line in req_file if line.strip() and not line.startswith("#")]
+            doc_dependencies = [line.strip() for line in req_file if line.strip() and not line.startswith("#") and not line.startswith('{')]
 
 
         if "project" not in pyproject_data:
@@ -241,6 +249,13 @@ def add_docs(
         new_dependencies = set(doc_dependencies)
         combined_dependencies = existing_dependencies.union(new_dependencies)
         pyproject_data["project"]["optional-dependencies"]["docs"] = list(combined_dependencies)
+
+        # Updating pyproject.toml to pass validate-pyproject
+        pyproject_data["project"]["authors"] = authors
+        if "version" not in pyproject_data["project"]:
+            pyproject_data["project"]["version"] = release
+        if "name" not in pyproject_data["project"]:
+            pyproject_data["project"]["name"] = name
 
         with open(pyproject_path, "wb") as f:
             tomli_w.dump(pyproject_data, f)
