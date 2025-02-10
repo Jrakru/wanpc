@@ -13,6 +13,7 @@ import shutil
 from validate_pyproject import api, errors
 import subprocess
 import re
+import webbrowser, threading, time
 
 from .config import Config
 from . import logger
@@ -164,14 +165,20 @@ def my_list_command(
         console.print(f"[red]Error listing templates: {str(e)}[/red]")
         raise typer.Exit(1)
     
-@app.command()
+#@app.command()
 def run_docs(
     target_dir: Optional[Path] = typer.Argument(
         None,
         help="The target directory where the docs folder will be created (defaults to current directory)"
+    ),
+    port: int = typer.Option(
+        8000,
+        "--port",
+        "-p",
+        help="Port to serve documentation on"
     )
 ):
-    """Run the documentation using Sphinx."""
+    """Run the documentation using Sphinx with auto-rebuild on changes."""
     try:
         if target_dir is None:
             target_dir = Path.cwd()
@@ -183,16 +190,35 @@ def run_docs(
             console.print(f"[red]Error: The docs folder does not exist in {docs_path}[/red]")
             raise typer.Exit(1)
 
-        # Build the HTML documentation using Sphinx
-        console.print("[green]Building HTML documentation using Sphinx...[/green]")
-        subprocess.run(["poetry", "run", "sphinx-build", "-b", "html", str(docs_path / "source"), str(docs_path / "_build" / "html")], check=True, cwd=target_dir)
-        console.print(f"[green]HTML documentation built successfully in {docs_path / '_build' / 'html'}[/green]")
-        target_dir = docs_path / "_build" / "html"
-        subprocess.run(["poetry","run","python","-m","http.server"], check=True, cwd=target_dir)
+        # Build and serve documentation with auto-reload
+        console.print("[green]Starting documentation server with auto-rebuild...[/green]")
+        
+        
+        # Use sphinx-autobuild instead of manual server
+        subprocess.run([
+            "poetry", "run", "sphinx-autobuild",
+            str(docs_path / "source"),  # Source dir
+            str(docs_path / "_build" / "html"),  # Output dir
+            f"--port={port}",  # Specify port
+            "--watch", str(target_dir),  # Watch project directory
+            "--open-browser",  # Auto-open browser
+            "--re-ignore", ".*/_build/.*",  # Ignore build directory
+        ], check=True, cwd=target_dir)
+
+        # Open browser after a short delay
+        def open_browser():
+            time.sleep(1) 
+            webbrowser.open(f"http://localhost:{port}")
+            
+        threading.Thread(target=open_browser).start()
 
     except Exception as e:
-        console.print(f"[red]Error building HTML documentation: {str(e)}[/red]")
-        raise typer.Exit(1)
+        console.print(f"[red]Error serving documentation: {str(e)}[/red]")
+        raise typer.Exit(1)   
+
+
+def run_docs_main():
+    typer.run(run_docs)
 
 
 @app.command()
@@ -350,10 +376,10 @@ def add_docs(
         subprocess.run(["poetry", "install", "--with", "docs"], check=True)
 
         # Build the HTML documentation using Sphinx
+        subprocess.run(["poetry","lock"], check=True)
+        subprocess.run(["poetry", "install"], check=True)
         console.print("[green]Building HTML documentation using Sphinx...[/green]")
-        subprocess.run(["poetry", "run", "sphinx-apidoc", "-o", str(docs_path / "source"), name], check=True)
         subprocess.run(["poetry", "run", "sphinx-apidoc", "-o", str(docs_path / "source"), name], check=True, cwd=target_dir)
-        subprocess.run(["poetry", "run", "sphinx-build", "-b", "html", str(docs_path / "source"), str(docs_path / "_build" / "html")], check=True, cwd=target_dir)
         console.print(f"[green]HTML documentation built successfully in {docs_path / '_build' / 'html'}[/green]")
 
 
