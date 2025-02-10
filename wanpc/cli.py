@@ -182,6 +182,9 @@ def run_docs(
     try:
         if target_dir is None:
             target_dir = Path.cwd()
+        elif Path(target_dir/"docs"/"_build"/"html").exists():
+            target_dir = Path(target_dir).expanduser().resolve()
+            target_dir = target_dir/"docs"/"_build"/"html"
         else:
             target_dir = Path(target_dir).expanduser().resolve()
 
@@ -207,7 +210,7 @@ def run_docs(
 
         # Open browser after a short delay
         def open_browser():
-            time.sleep(1) 
+            time.sleep(2) 
             webbrowser.open(f"http://localhost:{port}")
             
         threading.Thread(target=open_browser).start()
@@ -373,11 +376,11 @@ def add_docs(
 
         # Install documentation dependencies using poetry
         console.print("[green]Installing documentation dependencies using Poetry...[/green]")
-        subprocess.run(["poetry", "install", "--with", "docs"], check=True)
+        subprocess.run(["poetry", "install", "--with", "docs"], check=True, cwd=target_dir)
 
         # Build the HTML documentation using Sphinx
-        subprocess.run(["poetry","lock"], check=True)
-        subprocess.run(["poetry", "install"], check=True)
+        subprocess.run(["poetry","lock"], check=True, cwd=target_dir)
+        subprocess.run(["poetry", "install"], check=True, cwd=target_dir)
         console.print("[green]Building HTML documentation using Sphinx...[/green]")
         subprocess.run(["poetry", "run", "sphinx-apidoc", "-o", str(docs_path / "source"), name], check=True, cwd=target_dir)
         console.print(f"[green]HTML documentation built successfully in {docs_path / '_build' / 'html'}[/green]")
