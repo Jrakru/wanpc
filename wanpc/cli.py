@@ -232,6 +232,8 @@ def add_docs(
     )
 ):
     """Add a docs folder with initial documentation structure."""
+    docs_made = False
+    docs_path = ""
     try:
         if target_dir is None:
             target_dir = Path.cwd()
@@ -287,6 +289,7 @@ def add_docs(
 
         # Copy the template to the target directory
         shutil.copytree(template_path, docs_path)
+        docs_made = True
 
         # Modify the copied files according to the package in question
         # For example, you can replace placeholders in the copied files
@@ -388,6 +391,9 @@ def add_docs(
 
     except Exception as e:
         console.print(f"[red]Error creating docs folder: {str(e)}[/red]")
+        if docs_made:
+            shutil.rmtree(docs_path)
+            console.print(f"[yellow]Deleted {docs_path} due to failed installation[/yellow]")
         raise typer.Exit(1)
 
 @app.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
