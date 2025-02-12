@@ -11,6 +11,9 @@ import tomli, tomli_w
 from rich.prompt import Prompt, Confirm
 import shutil
 from validate_pyproject import api, errors
+import subprocess
+import re
+import webbrowser, threading, time
 
 from .config import Config
 from . import logger
@@ -29,6 +32,11 @@ def save_config(cfg: Dict[str, Any]) -> None:
     config = Config()
     config._config = cfg
     config._save_config()
+
+def is_valid_email(email: str) -> bool:
+    """Validate an email address using a regular expression."""
+    email_regex = r'^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$'
+    return re.match(email_regex, email) is not None
 
 def load_cookiecutter_config(template_path: str) -> Dict[str, Any]:
     """Load cookiecutter.json from template directory."""
@@ -156,6 +164,65 @@ def my_list_command(
     except Exception as e:
         console.print(f"[red]Error listing templates: {str(e)}[/red]")
         raise typer.Exit(1)
+    
+#@app.command()
+def run_docs(
+    target_dir: Optional[Path] = typer.Argument(
+        None,
+        help="The target directory where the docs folder will be created (defaults to current directory)"
+    ),
+    port: int = typer.Option(
+        8000,
+        "--port",
+        "-p",
+        help="Port to serve documentation on"
+    )
+):
+    """Run the documentation using Sphinx with auto-rebuild on changes."""
+    try:
+        if target_dir is None:
+            target_dir = Path.cwd()
+        elif Path(target_dir/"docs"/"_build"/"html").exists():
+            target_dir = Path(target_dir).expanduser().resolve()
+            target_dir = target_dir/"docs"/"_build"/"html"
+        else:
+            target_dir = Path(target_dir).expanduser().resolve()
+
+        docs_path = target_dir / "docs"
+        if not docs_path.exists():
+            console.print(f"[red]Error: The docs folder does not exist in {docs_path}[/red]")
+            raise typer.Exit(1)
+
+        # Build and serve documentation with auto-reload
+        console.print("[green]Starting documentation server with auto-rebuild...[/green]")
+        
+        
+        # Use sphinx-autobuild instead of manual server
+        subprocess.run([
+            "poetry", "run", "sphinx-autobuild",
+            str(docs_path / "source"),  # Source dir
+            str(docs_path / "_build" / "html"),  # Output dir
+            f"--port={port}",  # Specify port
+            "--watch", str(target_dir),  # Watch project directory
+            "--open-browser",  # Auto-open browser
+            "--re-ignore", ".*/_build/.*",  # Ignore build directory
+        ], check=True, cwd=target_dir)
+
+        # Open browser after a short delay
+        def open_browser():
+            time.sleep(2) 
+            webbrowser.open(f"http://localhost:{port}")
+            
+        threading.Thread(target=open_browser).start()
+
+    except Exception as e:
+        console.print(f"[red]Error serving documentation: {str(e)}[/red]")
+        raise typer.Exit(1)   
+
+
+def run_docs_main():
+    typer.run(run_docs)
+
 
 @app.command()
 def add_docs(
@@ -165,6 +232,8 @@ def add_docs(
     )
 ):
     """Add a docs folder with initial documentation structure."""
+    docs_made = False
+    docs_path = ""
     try:
         if target_dir is None:
             target_dir = Path.cwd()
@@ -190,6 +259,11 @@ def add_docs(
             if not name:
                 console.print(f"[red]Error: 'name' not found in pyproject.toml[/red]")
                 raise typer.Exit(1)
+            
+            if not is_valid_email(authors[0]["email"]):
+                console.print(f"[red]Error: Invalid email address found in pyproject.toml[/red]")
+                raise typer.Exit(1)
+
 
         docs_path = target_dir / "docs"
         if docs_path.exists():
@@ -215,6 +289,7 @@ def add_docs(
 
         # Copy the template to the target directory
         shutil.copytree(template_path, docs_path)
+        docs_made = True
 
         # Modify the copied files according to the package in question
         # For example, you can replace placeholders in the copied files
@@ -223,8 +298,9 @@ def add_docs(
                 content = file_path.read_text()
                 content = content.replace('{{ cookiecutter.project_slug }}', (name))
                 content = content.replace('{{ cookiecutter.project_name }}', (name))
-                ccontent = content.replace('{{ cookiecutter.author_name }}', (authors[0]["name"]))
+                content = content.replace('{{ cookiecutter.author_name }}', (authors[0]["name"]))
                 content = content.replace('{{ cookiecutter.version }}', (release))
+                content = content.replace('{{ cookiecutter.release }}', (release))
                 content = content.replace('{{ cookiecutter.year }}', str(year))
                 content = content.replace('{{ cookiecutter.project_slug.upper() }}', name.upper())
                 file_path.write_text(content) 
@@ -237,19 +313,38 @@ def add_docs(
         with open(requirements_path, "r") as req_file:
             doc_dependencies = [line.strip() for line in req_file if line.strip() and not line.startswith("#") and not line.startswith('{')]
 
+        # Add documentation dependencies to pyproject.toml
+        doc_dependencies = {
+            "sphinx": ">=7.1.2",
+            "sphinx-autodoc-typehints": ">=1.24.0",
+            "sphinx-notfound-page": ">=1.0.0",
+            "sphinx-autobuild": ">=2021.3.14",
+            "sphinx-rtd-theme": ">=1.3.0",
+            "nbsphinx": ">=0.9.3",
+            "sphinx-togglebutton": ">=0.3.2",
+            "myst-parser": ">=2.0.0",
+            "sphinxcontrib-mermaid": ">=0.9.2",
+            "sphinx-design": ">=0.5.0",
+            "sphinx-pydantic": ">=0.1.1",
+            "myst-nb" : ">=0.13.1",
+            "nbsphinx" : ">=0.9.3",
+        }
 
-        if "project" not in pyproject_data:
-            pyproject_data["project"] = {}
-        if "optional-dependencies" not in pyproject_data["project"]:
-            pyproject_data["project"]["optional-dependencies"] = {}
-        if "docs" not in pyproject_data["project"]["optional-dependencies"]:
-            pyproject_data["project"]["optional-dependencies"]["docs"] = []
+        if "tool" not in pyproject_data:
+            pyproject_data["tool"] = {}
+        if "poetry" not in pyproject_data["tool"]:
+            pyproject_data["tool"]["poetry"] = {}
+        if "group" not in pyproject_data["tool"]["poetry"]:
+            pyproject_data["tool"]["poetry"]["group"] = {}
+        if "docs" not in pyproject_data["tool"]["poetry"]["group"]:
+            pyproject_data["tool"]["poetry"]["group"]["docs"] = {}
+        if "dependencies" not in pyproject_data["tool"]["poetry"]["group"]["docs"]:
+            pyproject_data["tool"]["poetry"]["group"]["docs"]["dependencies"] = {}
 
         # Ensure no duplicates are added
-        existing_dependencies = set(pyproject_data["project"]["optional-dependencies"]["docs"])
-        new_dependencies = set(doc_dependencies)
-        combined_dependencies = existing_dependencies.union(new_dependencies)
-        pyproject_data["project"]["optional-dependencies"]["docs"] = list(combined_dependencies)
+        existing_dependencies = pyproject_data["tool"]["poetry"]["group"]["docs"]["dependencies"]
+        for dep, version in doc_dependencies.items():
+            existing_dependencies[dep] = version
 
         # Updating pyproject.toml to pass validate-pyproject
         pyproject_data["project"]["authors"] = authors
@@ -273,22 +368,32 @@ def add_docs(
         except errors.ValidationError as ex:
             print(f"Invalid Document: {ex.message}")
 
-        
-
-
         yml_path = first_template_path.parent / ".gitlab-ci.yml"
         if yml_path.exists() and not (target_dir / ".gitlab-ci.yml").exists():
             with open(yml_path, "r") as yml_file:
                 yml_content = yml_file.read()
             yml_content = yml_content.replace("$PROJECT_NAME", name)
+            yml_content = yml_content.replace("{{ cookiecutter.project_slug }}", name)
             with open(target_dir / ".gitlab-ci.yml", "w") as yml_file:
                 yml_file.write(yml_content)
 
-        
+        # Install documentation dependencies using poetry
+        console.print("[green]Installing documentation dependencies using Poetry...[/green]")
+        subprocess.run(["poetry", "install", "--with", "docs"], check=True, cwd=target_dir)
+
+        # Build the HTML documentation using Sphinx
+        subprocess.run(["poetry","lock"], check=True, cwd=target_dir)
+        subprocess.run(["poetry", "install"], check=True, cwd=target_dir)
+        console.print("[green]Building HTML documentation using Sphinx...[/green]")
+        subprocess.run(["poetry", "run", "sphinx-apidoc", "-o", str(docs_path / "source"), name], check=True, cwd=target_dir)
+        console.print(f"[green]HTML documentation built successfully in {docs_path / '_build' / 'html'}[/green]")
 
 
     except Exception as e:
         console.print(f"[red]Error creating docs folder: {str(e)}[/red]")
+        if docs_made:
+            shutil.rmtree(docs_path)
+            console.print(f"[yellow]Deleted {docs_path} due to failed installation[/yellow]")
         raise typer.Exit(1)
 
 @app.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
